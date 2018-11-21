@@ -1,0 +1,409 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+important library import
+```{r}
+library(pacman)
+library(DBI)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+#install.packages("tidy")
+#library(modelr)
+#library(broom)
+install.packages("mice")
+#install.packages("randomForest")
+library(mice)
+library(randomForest)
+library(car)
+library(rpart)
+library(caTools)
+library(ROCR)
+options(scipen=999)
+```
+set the working directory read the data and view
+```{r}
+setwd("/home/turzo/Downloads/Data Analytics /data analytics/Project_final")
+data<-read.csv("Indian Liver Patient Dataset (ILPD).csv")
+str(data)
+```
+If want to remove missing values
+```{r}
+# List out the rows with missing values
+data[rowSums(is.na(data)) > 0,]
+# Remove the rows with missing values to avoid discrepencies
+data <- data[complete.cases(data), ]
+```
+Look at the missing values and deal with them. Run the section if someone wants to predict the missing values
+```{r}
+sprintf("Missing values in columns) : %s",
+        colnames(data)[colSums(is.na(data)) > 0])
+#If we do not want to remove the missing values: 1. We will predict the missing values based on Random Forest and 2. then replace them.
+miceImputation <- mice(data[,!names(data) %in% "medv"], method="rf")  # Create a MICE imputation #object based on Random Forest for each column on the dataset.
+data <- complete(miceImputation) 
+```
+Exploratory analysis of the data
+```{r}
+#Check the distribution of variables
+hist(data$Age)
+boxplot(data$Age)#No outliers
+hist(data$TB)#this data is left skewd
+boxplot(data$TB)#Contains outliers
+hist(data$DB)#This data is also left skewd
+hist(data$Alkphos)#left skewd
+hist(data$Sgpt)#left skewed
+
+#Now we will do exploratory data analysis
+#Check the trend of all patients according to age
+data%>%ggplot(aes(x=Age,fill=factor(Problem)))+
+  geom_histogram(binwidth = 5)+
+  labs(y="Count",x="Age (continous)")+ theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("0.png")
+#Seems that liver patient ratio against the total population is higher in the older aged people 
+#Now let's do a boxplot to visualize the outlier and the data overall distribution against liver patient or non liver patient
+data%>%ggplot(aes(x=factor(Problem),y=Age))+
+  geom_boxplot()+
+  labs(y="Age",x="Liver disease") + theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("1.png")
+#Now check the box plot to visualize the Albumin and Globulin ratio among the patient and non patient
+data%>%ggplot(aes(x=factor(Problem),y=A.G))+
+  geom_boxplot()+
+  labs(y="Albumin and Globulin ratio",x="Liver disease") + theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("2.png")
+#Seems the albumin and globulin ration tends to be higher in the non patient category, means liver disease patients have a lower albumin
+#and globulin ration than the non diseased category
+#Turn the age variable into a categorical variable for further analysis
+ggplot(data,aes(x=Age,fill=factor(Problem)))+
+  geom_bar(width=0.5)+
+  xlab("Age groups")+
+  ylab("Total Count")+
+  labs(fill="Liver Disease")+ theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("3.png")
+#Now check for male age groups who is more prone to the disease
+data$Gender
+male_data<-data%>%filter(Gender==("Male"))
+male_data%>%
+  ggplot()+
+  aes(x=Age,fill=factor(Problem))+
+  geom_bar(width=0.5)+
+  xlab("Age groups (Male)")+
+  ylab("Total Count")+
+  labs(fill="Liver Disease") + theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("4.png")
+#Check the same for female patients, which group of females are more prone to liver disease?
+str(data)
+Female_data<-data%>%filter(Gender=="Female")
+Female_data%>%
+  ggplot()+
+  aes(x=Age,fill=factor(Problem))+
+  geom_bar(width=0.5)+
+  xlab("Age groups (Female)")+
+  ylab("Total Count")+
+  labs(fill="Liver Disease") + theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("5.png")
+#Turn the age variable into a categorical variable for further analysis
+#Before doing this we will backup the original data since we want to break the age variable only in this section
+backup_data<-data
+data$Age<-cut(data$Age, breaks = c(0,18,30,45,70,100),labels = c("teen","young","middle age","old","veryold"))
+#Check the Total protein Vs Total Bilirubin for each age group according to male and female
+data%>%ggplot(aes(x=TP,y=TB,color=factor(Problem)))+
+  geom_point()+
+  facet_grid(Gender~Age)+
+  xlab("Total Protein")+
+  ylab("Total Bilirubin")+
+  labs(fill="Liver disease") + theme(text = element_text(size=15),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("6.png")
+#Increasing number of bilirubin creates liver patient, according to the data visualization
+#Now check the both data at the same time for "which group of females are more prone to liver disease?"
+data%>%ggplot(aes(x=Gender,fill=factor(Problem)))+
+  facet_wrap(~Age)+
+  geom_bar(width=0.5)+
+  labs(fill="Liver disease") + theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("7.png")
+#Check the outliers against TB for male and female
+boxplot(TB ~ factor(Problem), data=data, main="Outliers against TB for male and female")
+#Check which group has the more patient male or female
+data$Gender<-as.factor(data$Gender)
+ggplot(data,aes(x=Gender,fill=factor(Problem)))+
+  geom_bar(width=0.5)+
+  xlab("Gender")+
+  ylab("Total Count")+
+  labs(fill="Liver Disease") + theme(text = element_text(size=20),
+        axis.text.x = element_text(angle=90, hjust=1)) 
+ggsave("8.png")
+```
+First backup the original data since we have made age categorical in previous section
+```{r}
+data<-backup_data
+```
+Since the outcome is a categorical variable not numerical. We have the factorize the categorical outcome, namely variable Problem
+```{r}
+data[which(data$Problem==1),'Problem']<-"Patient" # It exchanges with the string "Patient" if the numeric value is 1 
+data[which(data$Problem==2),'Problem']<-"Non-Patient" #It exchanges with the string "Non-Patient" if the numeric value is 0
+data$Problem<-factor(data$Problem) #Finally factor the Problem variable
+str(data)
+data$Gender<-factor(data$Gender)
+```
+Since we have noticed outlier in the data, we will now remove the outliers from the data and impute them with predicted values
+```{r}
+#data<-backup_data
+#########################################################
+#####Here we will define a function to deal with outliers
+#########################################################
+outlierKD <- function(dt, var) {
+  var_name <- eval(substitute(var),eval(dt))
+  tot <- sum(!is.na(var_name))
+  na1 <- sum(is.na(var_name))
+  m1 <- mean(var_name, na.rm = T)
+  par(mfrow=c(2, 2), oma=c(0,0,3,0))
+  boxplot(var_name, main="With outliers")
+  hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+  outlier <- boxplot.stats(var_name)$out
+  mo <- mean(outlier)
+  var_name <- ifelse(var_name %in% outlier, NA, var_name)
+  boxplot(var_name, main="Without outliers")
+  hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+  title("Outlier Check", outer=TRUE)
+  na2 <- sum(is.na(var_name))
+  message("Outliers identified: ", na2 - na1, " from ", tot, " observations")
+  message("Proportion (%) of outliers: ", (na2 - na1) / tot*100)
+  message("Mean of the outliers: ", mo)
+  m2 <- mean(var_name, na.rm = T)
+  message("Mean without removing outliers: ", m1)
+  message("Mean if we remove outliers: ", m2)
+  dt[as.character(substitute(var))] <- invisible(var_name)
+  assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+  message("Outliers successfully removed", "\n")
+  return(invisible(dt))
+}
+#Plot data with potential outliers
+# Plot of data with outliers.
+#Use outlierKD's parameter as 
+str(data)
+outlierKD(data,Age)
+outlierKD(data,TB)
+outlierKD(data,DB)
+outlierKD(data,Alkphos)
+outlierKD(data,Sgpt)
+outlierKD(data,Sgot)
+outlierKD(data,TP)
+outlierKD(data,ALB)
+outlierKD(data,A.G)
+#Check for each outlier manually insert every variable which consists of outlier. To remove them press yes
+#Write the dataset with imputed predicted values with MICE for back up
+write.csv(data,"my_data.csv")
+```
+Now predict the missing values which was removed and write them to our existing data
+```{r}
+mice_Model <- mice(data[, !names(data) %in% "medv"], method="rf")  # perform mice imputation, based on random forests.
+data <- complete(mice_Model)  # generate the completed data.
+write.csv(data,"Imputed_data.csv")
+```
+Scale the existing dataset
+```{r}
+data<-data %>% mutate_each_(funs(scale),vars=c("Age","TB","DB","Alkphos","Sgpt","Sgot","TP","ALB","A.G"))
+```
+
+Find out the highly correlated values, since we want to remove them to do logistic regression reduced model
+```{r}
+#Find out the Highly correlated values since multiple highly correlated variable is not necessery in the model, we should try to minimize the highly correlated variables 
+df <- data[,c("Age","TB","DB","Alkphos","Sgpt","Sgot","TP","ALB","A.G")]
+cor(df)  # correlation matrix
+M <- cor(df)
+#install.packages("corrplot")
+library(corrplot)
+par(mfrow=c(1,1))
+corrplot(M)  # visualization of correlation matrix
+```
+Build a full model and a reduced model for comparison purpose
+```{r}
+#Full model
+logistic_model1 <- glm(Problem ~ .,family=binomial
+                      (link='logit'),data=data)
+#logistic_model1 <- glm(Problem ~ .-A.G,family=binomial
+#                       (link='logit'),data=data)
+logistic_model2 <- glm(Problem ~ Age + DB + Alkphos + Sgpt + Sgot + TP + ALB  ,family=binomial
+                       (link='logit'),data=data)
+#install.packages("lmtest")
+library(lmtest)
+lrtest(logistic_model1, logistic_model2)
+#Since if we remove TB and A.G (As they are more correlated with variables DB and Sgpt) removing them makes the reduced model not very statistically
+#different since testing both model shows a p value greater than 0.05. Since two models are equally likely there is no point of using the full model.
+```
+Split the dataset into training set and testset for both the reduced model and full model. training_reduced and test_reduced will be consisted with the reduced variables. On the other hand training, testing will consist of the full model training and testing set
+```{r}
+split<-sample.split(data,SplitRatio = 0.8)
+training<-subset(data,split==T)
+testing<- subset(data,split==F)
+training_reduced<-training[,-c(3,10)]
+testing_reduced<-testing[,-c(3,10)]
+```
+Build up the model with the training set
+```{r}
+reduced_model <- glm (Problem ~ ., data = training_reduced, family = binomial)
+full_model<-glm(Problem~.,data=training,family = binomial)
+summary(reduced_model)
+summary(full_model)
+```
+Test both models using the test sets
+```{r}
+#Test both of the models using test set
+test_predicted_full_model<-predict(full_model,newdata = testing,type = "response")
+test_predicted_reduced_model<-predict(reduced_model,newdata = testing_reduced,type="response")
+#list confusion matrix for both models
+list(full_model_conf=table(testing$Problem, test_predicted_full_model>0.5)%>%prop.table()%>%round(3),
+     reduced_model_conf=table(testing_reduced$Problem,test_predicted_reduced_model>0.5)%>%prop.table()%>%round(3))
+#First the full model confusion metrix
+table(test_predicted_full_model > 0.5,testing$Problem)
+#Now the reduced model confusion metrix
+table(test_predicted_reduced_model > 0.5,testing_reduced$Problem)
+```
+Plot the results based on the full model and reduced model
+```{r}
+#False positive dicreased
+#Draw ROC Curve for both of the model
+par(mfrow=c(1,2))
+#Draw the ROC of the full model first (left) and then reduced model (right)
+prediction(test_predicted_full_model,testing$Problem)%>%
+  performance(measure = "tpr", x.measure = "fpr")%>%
+  plot()
+prediction(test_predicted_reduced_model,testing_reduced$Problem)%>%
+  performance(measure = "tpr", x.measure = "fpr")%>%
+  plot()
+#Compute the area under the curve for both model
+# full model AUC
+prediction(test_predicted_full_model, testing$Problem) %>%
+  performance(measure = "auc") %>%
+  .@y.values
+# Reduced model AUC
+prediction(test_predicted_reduced_model, testing_reduced$Problem) %>%
+  performance(measure = "auc") %>%
+  .@y.values
+#We have found that the reduced model AUC has no AUC difference than the full model, so there is no point of using the full model
+#Thus variable can be reduced as they have no effect 
+# According to logistic regression it is safe to remove the TB and A.G since they were highly correlated with DB and ALB respectively
+```
+See the ctree of the whole data
+```{r}
+p_load(party,stringr)
+tree <- ctree(Problem~.,data=data, control=ctree_control(minbucket = 8))
+plot(tree)
+#According to Ctree the most important split happens according to Sgpt. Then Alkphos and A.G
+```
+Decision tree prediction with the reduced set of variable and full set of variable
+```{r}
+#Build a decision tree classifier for the full model
+dtree_classifier_full<-rpart(formula = Problem~.,data = training)
+#Test the test set we have built earlier on that
+y_pred_full<-predict(dtree_classifier_full,newdata = testing[-11],type = 'class')
+#Build the decision tree classifier for the reduced model
+dtree_classifier_reduced<-rpart(formula = Problem~.,data = training_reduced)
+#Test the test set we have built earlier on that
+y_pred_reduced<-predict(dtree_classifier_reduced,newdata = testing_reduced[-9],type = 'class')
+```
+Now test the both model with the test set
+```{r}
+#Compute the confusion metrix to understand about type I and type II error
+cm_full <- table(testing[,11],y_pred_full)
+cm_full
+#Compute the confusion metrix to understand about type I and type II error
+cm_reduced<- table(testing_reduced[,9],y_pred_reduced)
+cm_reduced
+#Here also accuracy does not differs much. We can deduce that there is no point of using a full model with highly correlated variables
+```
+Plot the results
+```{r}
+#Plot the decision tree for the reduced model
+par(mfrow=c(1,1))
+plot(dtree_classifier_reduced)
+text(dtree_classifier_reduced)
+#Plot the decision tree for the full model
+par(mfrow=c(1,1))
+plot(dtree_classifier_full)
+text(dtree_classifier_full)
+#Here we can also see that Alkphos and Sgot are playing important roles
+```
+Now we will see some other methods which also describes variable importance but they are not in the basis of statistically significance
+```{r}
+#Check the variable importance with conditional forest
+library(party)
+cf1 <- cforest(Problem ~ . , data= data, control=cforest_unbiased(mtry=2,ntree=50))
+varimp(cf1)
+#See the important variable according to the mars model
+#install.packages("earth")
+library(earth)
+marsModel <- earth(Problem ~ ., data=data) # build model
+ev <- evimp (marsModel)
+plot(ev, cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+#install.packages("Boruta")
+library(Boruta)
+#Plot variable importance level with BORUTA MODEL
+boruta_output <- Boruta(Problem ~ ., data=data, doTrace=2)  # perform Boruta search
+boruta_signif <- names(boruta_output$finalDecision[boruta_output$finalDecision %in% c("Confirmed", "Tentative")])  # collect Confirmed and Tentative variables
+print(boruta_signif)  # significant variables
+plot(boruta_output, cex.axis=1.5, las=2, xlab="", main="Variable Importance")
+library(randomForest)
+set.seed(4543)
+#Plot variable importance level with random forest importance
+importance_var <- randomForest(Problem ~ ., data=data, ntree=1000, keep.forest=FALSE,
+                          importance=TRUE)
+varImpPlot(importance_var)
+```
+We will perform kmeans clustering on our data. But, first we need to know the actual numbers of clusters. We will do that by Elbow method
+```{r}
+#Using the elbow method find the optimal number of clusters.
+set.seed(6)
+wcss<-vector()
+columns<-data[c(1,3,4,5,6,7,8,9)]
+for(i in 1:15) wcss[i]<-sum(kmeans(columns,i)$withinss)
+plot(1:15,wcss,type = "b", main=paste("Clusters of the people"),
+     xlab = "number of clusters",ylab = "WCSS"
+     )
+install.packages("mclust")
+new_data <- data %>% select(-Gender,-Problem)
+na.omit(new_data) %>% t() %>% dist() %>% hclust() %>% plot()
+
+data_patient<-data[data$Problem=="Patient",]
+data_nonpatient<-data[data$Problem=="Non-Patient",]
+
+new_data2 <- data_patient %>% select(Age,Alkphos, DB, Sgot)
+new_data2 <- na.omit(new_data2)
+k2 <- kmeans(new_data2, centers = 4, nstart = 25)
+str(k2)
+k2
+new_data2 %>% plot(col =(k2$cluster +1) , main="K-Means result with 4 clusters for patients", pch=20, cex=2)
+
+
+new_data3 <- data_nonpatient %>% select(Age,Alkphos,  DB, Sgot)
+new_data3 <- na.omit(new_data3)
+k2 <- kmeans(new_data3, centers = 4, nstart = 25)
+str(k2)
+k2
+new_data3 %>% plot(col =(k2$cluster +1) , main="K-Means result with 4 clusters for non-patients", pch=20, cex=2)
+
+
+#Now do the kmeans clustering based on elbow method, we have found the number of clusters is 5 according to our analysis of elbow.
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
